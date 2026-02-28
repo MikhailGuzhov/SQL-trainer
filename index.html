@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Enterprise Arena</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alasql/3.1.0/alasql.min.js"></script>
+    <style>
+        body { background-color: #f8fafc; color: #0f172a; font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        .smooth-scroll { scroll-behavior: smooth; }
+        .sql-code { font-family: 'Fira Code', 'Courier New', Courier, monospace; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- ДАННЫЕ И ИНИЦИАЛИЗАЦИЯ БД ---
+        const initDB = () => {
+            alasql('DROP TABLE IF EXISTS users'); alasql('DROP TABLE IF EXISTS products');
+            alasql('DROP TABLE IF EXISTS orders'); alasql('DROP TABLE IF EXISTS order_items'); alasql('DROP TABLE IF EXISTS tickets');
+
+            alasql('CREATE TABLE users (id INT, name STRING, segment STRING, ltv INT, reg_year INT)');
+            alasql('CREATE TABLE products (id INT, title STRING, category STRING, price INT, stock INT)');
+            alasql('CREATE TABLE orders (id INT, user_id INT, total_amount INT, status STRING)');
+            alasql('CREATE TABLE order_items (order_id INT, product_id INT, qty INT)');
+            alasql('CREATE TABLE tickets (id INT, issue STRING, priority STRING, status STRING, user_id INT, manager_id INT)');
+
+            alasql("INSERT INTO users VALUES (1, 'Иван Иванов', 'VIP', 1200000, 2019), (2, 'Анна Смирнова', 'Regular', 25000, 2023), (3, 'Петр Сидоров', 'Wholesale', 5000000, 2020), (4, 'Елена Попова', 'Regular', 15000, 2024), (5, 'Дмитрий Волков', 'VIP', 850000, 2021), (6, 'Олег Тиньков', 'VIP', 3000000, 2015), (7, 'Мария Кюри', 'Regular', 8000, 2024), (8, 'Алексей Навальный', 'Wholesale', 1800000, 2021), (9, 'Сергей Брин', 'VIP', 1400000, 2022), (10, 'Ксения Собчак', 'Regular', 110000, 2020)");
+            alasql("INSERT INTO products VALUES (101, 'MacBook Pro 16', 'Laptops', 300000, 15), (102, 'iPhone 15 Pro', 'Smartphones', 120000, 50), (103, 'AirPods Max', 'Audio', 60000, 0), (104, 'Logitech MX Master 3', 'Accessories', 12000, 100), (105, 'Dell UltraSharp 32', 'Monitors', 90000, 10)");
+            alasql("INSERT INTO orders VALUES (1001, 1, 420000, 'Delivered'), (1002, 1, 60000, 'Processing'), (1003, 2, 12000, 'Delivered'), (1004, 3, 3000000, 'Delivered'), (1005, 4, 120000, 'Cancelled'), (1006, 5, 90000, 'Shipped'), (1007, 6, 420000, 'Delivered'), (1008, 9, 360000, 'Processing')");
+            alasql("INSERT INTO order_items VALUES (1001, 101, 1), (1001, 102, 1), (1002, 103, 1), (1003, 104, 1), (1004, 101, 10), (1005, 102, 1), (1006, 105, 1), (1007, 101, 1), (1007, 102, 1), (1008, 102, 3)");
+            alasql("INSERT INTO tickets VALUES (1, 'Товар пришел с царапиной', 'High', 'Open', 1, 10), (2, 'Где мой заказ?', 'Critical', 'In Progress', 4, 12), (3, 'Не прошла оплата', 'Low', 'Closed', 2, 10), (4, 'Брак наушников', 'Critical', 'Open', 6, 11), (5, 'Изменить адрес доставки', 'Minor', 'Open', 5, 12), (6, 'Требуется возврат средств', 'Blocker', 'Open', 8, 10)");
+        };
+
+        const schemaLegend = [
+            { name: "users", desc: "Клиентская база", columns: [{n: "id", type: "PK"}, {n: "name", type: "STR"}, {n: "segment", type: "STR"}, {n: "ltv", type: "INT"}, {n: "reg_year", type: "INT"}] },
+            { name: "products", desc: "Справочник товаров", columns: [{n: "id", type: "PK"}, {n: "title", type: "STR"}, {n: "category", type: "STR"}, {n: "price", type: "INT"}, {n: "stock", type: "INT"}] },
+            { name: "orders", desc: "Заказы клиентов", columns: [{n: "id", type: "PK"}, {n: "user_id", type: "FK (users)"}, {n: "total_amount", type: "INT"}, {n: "status", type: "STR"}] },
+            { name: "order_items", desc: "Товары в заказах", columns: [{n: "order_id", type: "FK (orders)"}, {n: "product_id", type: "FK (products)"}, {n: "qty", type: "INT"}] },
+            { name: "tickets", desc: "Обращения", columns: [{n: "id", type: "PK"}, {n: "issue", type: "STR"}, {n: "priority", type: "STR"}, {n: "status", type: "STR"}, {n: "user_id", type: "FK"}] }
+        ];
+
+        const taskCategories = [
+            { id: 1, theoryId: "theory-base", name: "Базовый SELECT (1-5)" },
+            { id: 6, theoryId: "theory-filter", name: "Фильтрация и Сортировка (6-10)" },
+            { id: 11, theoryId: "theory-filter-adv", name: "BETWEEN, IN, LIKE (11-15)" },
+            { id: 16, theoryId: "theory-agg", name: "Агрегатные функции (16-20)" },
+            { id: 21, theoryId: "theory-group", name: "Группировка: GROUP BY (21-25)" },
+            { id: 26, theoryId: "theory-join", name: "Связи: INNER JOIN (26-30)" },
+            { id: 31, theoryId: "theory-join-left", name: "Внешние связи: LEFT JOIN (31-35)" },
+            { id: 36, theoryId: "theory-subquery", name: "Подзапросы (36-40)" },
+            { id: 41, theoryId: "theory-adv", name: "Продвинутая выборка (41-45)" },
+            { id: 46, theoryId: "theory-dml", name: "DML: Изменение данных (46-50)" },
+            { id: 51, theoryId: "theory-func", name: "Строковые функции (51-54)" },
+            { id: 55, theoryId: "theory-sets", name: "Множества и CROSS JOIN (55-58)" },
+            { id: 59, theoryId: "theory-exists", name: "Сложная логика: EXISTS (59-63)" },
+            { id: 64, theoryId: "theory-dml-adv", name: "Тяжелый DML (64-67)" },
+            { id: 68, theoryId: "theory-arch", name: "Уровень Архитектора (68-70)" },
+        ];
+
+        const getCategoryInfo = (taskId) => {
+            let cat = taskCategories[0];
+            for (let i = 0; i < taskCategories.length; i++) {
+                if (taskId >= taskCategories[i].id) cat = taskCategories[i];
+            }
+            return cat;
+        };
+
+        const tasks = [
+            // Блок 1
+            { id: 1, type: 'select', title: "1. Выгрузка базы клиентов", desc: "Бизнес-задача: Отделу аналитики нужен полный слепок клиентской базы.\nДействие: Выведи абсолютно все данные из таблицы users.", answer: "SELECT * FROM users", hint: "Используй символ *, чтобы выбрать все колонки таблицы." },
+            { id: 2, type: 'select', title: "2. Контакты для рассылки", desc: "Бизнес-задача: Маркетинг готовит email-рассылку и просит выгрузить только имена клиентов (name) и их сегмент (segment). Никаких лишних данных.\nДействие: Напиши SELECT с указанием нужных полей.", answer: "SELECT name, segment FROM users", hint: "Перечисли нужные колонки через запятую после SELECT." },
+            { id: 3, type: 'select', title: "3. Анализ ассортимента", desc: "Бизнес-задача: Категорийный менеджер хочет знать, какие вообще категории товаров у нас представлены.\nДействие: Выведи уникальные категории (category) из таблицы products.", answer: "SELECT DISTINCT category FROM products", hint: "Ключевое слово DISTINCT убирает дубликаты в выборке." },
+            { id: 4, type: 'select', title: "4. Фильтрация премиум-сегмента", desc: "Бизнес-задача: Для персонального обзвона нужны крупные клиенты.\nДействие: Найди клиентов (вся инфа), чей Lifetime Value (ltv) строго больше 1000000.", answer: "SELECT * FROM users WHERE ltv > 1000000", hint: "Используй оператор WHERE для фильтрации числовых значений." },
+            { id: 5, type: 'select', title: "5. Поиск отмененных заказов", desc: "Бизнес-задача: Финдир ищет дыры в бюджете.\nДействие: Выгрузи все заказы (таблица orders), у которых статус (status) равен 'Cancelled'.", answer: "SELECT * FROM orders WHERE status = 'Cancelled'", hint: "Строковые значения в SQL обязательно оборачиваются в одинарные кавычки." },
+            
+            // Блок 2
+            { id: 6, type: 'select', title: "6. Приоритетные тикеты", desc: "Бизнес-задача: Руководитель саппорта просит найти горящие проблемы.\nДействие: Найди обращения (tickets), где критичность (priority) 'Critical' И статус 'Open'.", answer: "SELECT * FROM tickets WHERE priority = 'Critical' AND status = 'Open'", hint: "Соедини два условия фильтрации через логический оператор AND." },
+            { id: 7, type: 'select', title: "7. Лояльные и новые", desc: "Бизнес-задача: Для когортного анализа нужны клиенты, зарегистрированные либо в 2015 году (старожилы), либо в 2024 году (новички).\nДействие: Выведи их из таблицы users.", answer: "SELECT * FROM users WHERE reg_year = 2015 OR reg_year = 2024", hint: "Используй логический оператор OR для проверки хотя бы одного совпадения." },
+            { id: 8, type: 'select', title: "8. Очередь на отправку", desc: "Бизнес-задача: Склад просит упорядочить заказы по сумме.\nДействие: Выведи все заказы (orders), отсортировав их по сумме (total_amount) по возрастанию.", answer: "SELECT * FROM orders ORDER BY total_amount ASC", hint: "Используй конструкцию ORDER BY колонка ASC." },
+            { id: 9, type: 'select', title: "9. Многоуровневая сортировка", desc: "Бизнес-задача: Прайс-лист для сайта.\nДействие: Выведи товары (products), отсортировав их сначала по категории (category) по алфавиту, а затем по цене (price) по убыванию.", answer: "SELECT * FROM products ORDER BY category ASC, price DESC", hint: "Перечисли колонки для сортировки через запятую, явно указывая ASC или DESC." },
+            { id: 10, type: 'select', title: "10. Топ-3 товара", desc: "Бизнес-задача: На главную страницу сайта нужно вывести 3 самых дорогих товара.\nДействие: Выведи название (title) и цену (price), отсортировав по цене по убыванию и ограничив результат.", answer: "SELECT title, price FROM products ORDER BY price DESC LIMIT 3", hint: "Добавь LIMIT 3 в самый конец запроса." },
+            
+            // Блок 3
+            { id: 11, type: 'select', title: "11. Ценовой коридор", desc: "Бизнес-задача: Клиент применил фильтр в каталоге.\nДействие: Найди товары (products), чья цена находится строго в диапазоне от 50000 до 150000 включительно.", answer: "SELECT * FROM products WHERE price BETWEEN 50000 AND 150000", hint: "Используй оператор BETWEEN значение1 AND значение2." },
+            { id: 12, type: 'select', title: "12. Выборка по списку", desc: "Бизнес-задача: Бухгалтерии нужны данные по конкретным заказам.\nДействие: Выведи заказы (orders), чей id равен 1002, 1005 или 1008.", answer: "SELECT * FROM orders WHERE id IN (1002, 1005, 1008)", hint: "Вместо длинного OR используй конструкцию IN (список_значений)." },
+            { id: 13, type: 'select', title: "13. Поиск по префиксу", desc: "Бизнес-задача: Нужно найти все модели Айфонов.\nДействие: Выведи товары (products), чье название (title) начинается со слова 'iPhone'.", answer: "SELECT * FROM products WHERE title LIKE 'iPhone%'", hint: "Символ % в операторе LIKE означает 'любое количество любых символов после'." },
+            { id: 14, type: 'select', title: "14. Поиск в тексте", desc: "Бизнес-задача: Анализ проблем с оплатой.\nДействие: Найди тикеты (tickets), в тексте проблемы (issue) которых есть слово 'оплата'.", answer: "SELECT * FROM tickets WHERE issue LIKE '%оплата%'", hint: "Оберни искомое слово в проценты с обеих сторон: '%слово%'." },
+            { id: 15, type: 'select', title: "15. Исключение статусов", desc: "Бизнес-задача: Сборка заказов.\nДействие: Выведи заказы (orders), которые еще в работе — то есть их статус НЕ 'Delivered' и НЕ 'Cancelled'.", answer: "SELECT * FROM orders WHERE status NOT IN ('Delivered', 'Cancelled')", hint: "Используй NOT IN для исключения списка значений." },
+            
+            // Блок 4
+            { id: 16, type: 'select', title: "16. Общее количество клиентов", desc: "Бизнес-задача: Для дашборда инвесторам нужно показать метрику базы.\nДействие: Посчитай общее количество строк в таблице users. Назови колонку total_users.", answer: "SELECT COUNT(*) AS total_users FROM users", hint: "Агрегатная функция COUNT(*) считает количество строк." },
+            { id: 17, type: 'select', title: "17. Выручка с доставленных", desc: "Бизнес-задача: Считаем реальные деньги.\nДействие: Просуммируй total_amount всех заказов со статусом 'Delivered'. Колонку назови real_revenue.", answer: "SELECT SUM(total_amount) AS real_revenue FROM orders WHERE status = 'Delivered'", hint: "Агрегатная функция SUM(колонка) суммирует числовые значения." },
+            { id: 18, type: 'select', title: "18. Средний чек", desc: "Бизнес-задача: Вычислить среднюю стоимость заказа по всей базе.\nДействие: Посчитай среднее для total_amount из orders. Назови avg_check.", answer: "SELECT AVG(total_amount) AS avg_check FROM orders", hint: "Используй функцию AVG(колонка)." },
+            { id: 19, type: 'select', title: "19. Вилка цен", desc: "Бизнес-задача: Понять диапазон цен в магазине.\nДействие: Выведи самую низкую и самую высокую цену (price) из products. Назови колонки min_p и max_p.", answer: "SELECT MIN(price) AS min_p, MAX(price) AS max_p FROM products", hint: "В одном SELECT можно вызвать сразу несколько агрегатных функций." },
+            { id: 20, type: 'select', title: "20. Оценка склада", desc: "Бизнес-задача: Сколько денег заморожено в конкретном товаре?\nДействие: Для товара с id = 101 выведи его стоимость на складе (price * stock). Назови total_value.", answer: "SELECT price * stock AS total_value FROM products WHERE id = 101", hint: "В SELECT можно выполнять базовые математические операции с колонками." },
+            
+            // Блок 5
+            { id: 21, type: 'select', title: "21. Распределение по сегментам", desc: "Бизнес-задача: Сколько у нас клиентов в каждом сегменте?\nДействие: Сгруппируй таблицу users по segment и посчитай количество (COUNT). Выведи segment и users_count.", answer: "SELECT segment, COUNT(*) AS users_count FROM users GROUP BY segment", hint: "Используй GROUP BY segment. В SELECT укажи segment и функцию COUNT(*)." },
+            { id: 22, type: 'select', title: "22. Склад по категориям", desc: "Бизнес-задача: Сколько единиц товара (stock) лежит на складе в каждой категории?\nДействие: Выведи category и сумму stock (как total_items).", answer: "SELECT category, SUM(stock) AS total_items FROM products GROUP BY category", hint: "Группируй по category, применяй SUM(stock)." },
+            { id: 23, type: 'select', title: "23. Нагрузка по статусам", desc: "Бизнес-задача: Оценка работы саппорта.\nДействие: Посчитай количество обращений (tickets) в каждом статусе (status). Выведи status и ticket_count.", answer: "SELECT status, COUNT(*) AS ticket_count FROM tickets GROUP BY status", hint: "Группировка по статусу." },
+            { id: 24, type: 'select', title: "24. Отсечение мелких сегментов", desc: "Бизнес-задача: Ищем самые прибыльные когорты.\nДействие: Выведи segment и средний LTV (avg_ltv), но только для тех сегментов, где средний LTV строго больше 50000.", answer: "SELECT segment, AVG(ltv) AS avg_ltv FROM users GROUP BY segment HAVING AVG(ltv) > 50000", hint: "Для фильтрации результатов группировки используй HAVING, а не WHERE." },
+            { id: 25, type: 'select', title: "25. Детализация заказа", desc: "Бизнес-задача: Сколько всего единиц товаров (qty) заказано в рамках КАЖДОГО заказа?\nДействие: Сгруппируй order_items по order_id, выведи order_id и сумму qty (как total_items).", answer: "SELECT order_id, SUM(qty) AS total_items FROM order_items GROUP BY order_id", hint: "Группировка по ID заказа в связующей таблице." },
+            
+            // Блок 6
+            { id: 26, type: 'select', title: "26. Заказ + Клиент", desc: "Бизнес-задача: Бухгалтерия просит отчет с именами.\nДействие: Соедини таблицы orders и users. Выведи id заказа (orders.id) и имя клиента (users.name).", answer: "SELECT orders.id, users.name FROM orders JOIN users ON orders.user_id = users.id", hint: "INNER JOIN users ON orders.user_id = users.id." },
+            { id: 27, type: 'select', title: "27. Заказы VIP-клиентов", desc: "Бизнес-задача: Выгрузить суммы заказов только элитных клиентов.\nДействие: Соедини orders и users. Выведи orders.id и total_amount, добавив фильтр WHERE users.segment = 'VIP'.", answer: "SELECT orders.id, orders.total_amount FROM orders JOIN users ON orders.user_id = users.id WHERE users.segment = 'VIP'", hint: "После JOIN ты можешь накладывать условия на любую из соединенных таблиц." },
+            { id: 28, type: 'select', title: "28. Жалобы с именами", desc: "Бизнес-задача: Служба контроля качества просит выгрузить тикеты.\nДействие: Соедини tickets и users. Выведи текст проблемы (issue) и имя клиента (name).", answer: "SELECT tickets.issue, users.name FROM tickets JOIN users ON tickets.user_id = users.id", hint: "Связь через tickets.user_id = users.id." },
+            { id: 29, type: 'select', title: "29. Состав корзины", desc: "Бизнес-задача: Логистам нужно собрать заказ на складе.\nДействие: Соедини order_items и products. Выведи id заказа (order_id) и название товара (title).", answer: "SELECT order_items.order_id, products.title FROM order_items JOIN products ON order_items.product_id = products.id", hint: "Связывай таблицу позиций заказа с каталогом товаров по product_id." },
+            { id: 30, type: 'select', title: "30. Тройной джоин (Отчет)", desc: "Бизнес-задача: Полный отчет для аккаунт-менеджера.\nДействие: Соедини users, orders и order_items. Выведи Имя клиента (name), id заказа (order_id) и количество товара (qty).", answer: "SELECT users.name, order_items.order_id, order_items.qty FROM users JOIN orders ON users.id = orders.user_id JOIN order_items ON orders.id = order_items.order_id", hint: "Цепочка: users -> JOIN orders -> JOIN order_items." },
+            
+            // Блок 7
+            { id: 31, type: 'select', title: "31. Клиенты без заказов (Начало)", desc: "Бизнес-задача: Нам нужно увидеть ВСЕХ клиентов базы и их заказы, даже если они еще ничего не купили.\nДействие: Выполни LEFT JOIN от users к orders. Выведи users.name и orders.id.", answer: "SELECT users.name, orders.id FROM users LEFT JOIN orders ON users.id = orders.user_id", hint: "LEFT JOIN сохранит всех клиентов из левой таблицы (users)." },
+            { id: 32, type: 'select', title: "32. Брошенные корзины", desc: "Бизнес-задача: Маркетинг ищет тех, кто зарегистрировался, но так ничего и не купил.\nДействие: LEFT JOIN от users к orders. Выведи users.name тех, у кого orders.id является NULL.", answer: "SELECT users.name FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.id IS NULL", hint: "Используй фильтр WHERE orders.id IS NULL." },
+            { id: 33, type: 'select', title: "33. Товары, которые не покупают", desc: "Бизнес-задача: Склад просит выявить неликвид.\nДействие: LEFT JOIN от products к order_items. Выведи title товаров, у которых нет записей в order_items.", answer: "SELECT products.title FROM products LEFT JOIN order_items ON products.id = order_items.product_id WHERE order_items.order_id IS NULL", hint: "Точно так же, LEFT JOIN от товаров к позициям, поиск NULL." },
+            { id: 34, type: 'select', title: "34. Сводка выручки по клиентам", desc: "Бизнес-задача: Аналитика LTV.\nДействие: Выведи Имя клиента (name) и суммарную стоимость его заказов (SUM total_amount). Используй JOIN и GROUP BY.", answer: "SELECT users.name, SUM(orders.total_amount) AS total_sum FROM users JOIN orders ON users.id = orders.user_id GROUP BY users.name", hint: "Сначала JOIN, затем группировка по имени клиента." },
+            { id: 35, type: 'select', title: "35. Абсолютная сводка", desc: "Бизнес-задача: Аналитика просит учесть ВСЕХ клиентов, даже без заказов.\nДействие: Сделай LEFT JOIN users и orders. Выведи name и SUM(total_amount). Для тех, кто не покупал, сумма будет пустой (NULL).", answer: "SELECT users.name, SUM(orders.total_amount) AS total_sum FROM users LEFT JOIN orders ON users.id = orders.user_id GROUP BY users.name", hint: "Просто замени JOIN из предыдущей задачи на LEFT JOIN." },
+            
+            // Блок 8
+            { id: 36, type: 'select', title: "36. Чеки выше среднего", desc: "Бизнес-задача: Выявить аномально крупные покупки.\nДействие: Найди заказы (id, total_amount), где сумма больше средней суммы заказа по всей базе. (Используй подзапрос).", answer: "SELECT id, total_amount FROM orders WHERE total_amount > (SELECT AVG(total_amount) FROM orders)", hint: "WHERE total_amount > (вычисление среднего в подзапросе)." },
+            { id: 37, type: 'select', title: "37. Поиск по чужому условию", desc: "Бизнес-задача: Найти все заказы VIP-клиентов, не используя JOIN.\nДействие: Выведи orders, чей user_id находится внутри (IN) подзапроса, ищущего id VIP-клиентов.", answer: "SELECT * FROM orders WHERE user_id IN (SELECT id FROM users WHERE segment = 'VIP')", hint: "WHERE user_id IN (SELECT id FROM users ...)." },
+            { id: 38, type: 'select', title: "38. Оценка недополученной прибыли", desc: "Бизнес-задача: Вычислить разницу с максимумом.\nДействие: Для каждого заказа выведи его сумму и разницу между этой суммой и МАКСИМАЛЬНЫМ чеком в базе (назови diff).", answer: "SELECT total_amount, (SELECT MAX(total_amount) FROM orders) - total_amount AS diff FROM orders", hint: "Подзапрос можно использовать прямо в SELECT для математики." },
+            { id: 39, type: 'select', title: "39. Поиск самого дорогого", desc: "Бизнес-задача: Найти флагманский продукт.\nДействие: Выведи title товара, цена которого равна максимальной цене (через подзапрос) в каталоге.", answer: "SELECT title FROM products WHERE price = (SELECT MAX(price) FROM products)", hint: "WHERE price = (подзапрос с MAX)." },
+            { id: 40, type: 'select', title: "40. Глубокое погружение", desc: "Бизнес-задача: Выявить имена клиентов, создавших Blocker-тикеты, без использования JOIN.\nДействие: Выведи name из users, где id входит в результаты подзапроса к tickets.", answer: "SELECT name FROM users WHERE id IN (SELECT user_id FROM tickets WHERE priority = 'Blocker')", hint: "Используй связку WHERE id IN (подзапрос)." },
+            
+            // Блок 9
+            { id: 41, type: 'select', title: "41. Единый реестр названий", desc: "Бизнес-задача: Системный поиск.\nДействие: Выведи в один столбец (с алиасом label) имена клиентов (name) и названия товаров (title). Используй UNION.", answer: "SELECT name AS label FROM users UNION SELECT title AS label FROM products", hint: "UNION склеивает результаты по вертикали. Главное, чтобы совпадали алиасы и типы." },
+            { id: 42, type: 'select', title: "42. Кастомная логика статусов", desc: "Бизнес-задача: Простановка бейджей в CRM.\nДействие: Выведи name клиента и колонку status_badge: если ltv >= 1000000 пишем 'Whale', иначе 'Fish'.", answer: "SELECT name, CASE WHEN ltv >= 1000000 THEN 'Whale' ELSE 'Fish' END AS status_badge FROM users", hint: "Используй оператор CASE WHEN ... THEN ... ELSE ... END." },
+            { id: 43, type: 'select', title: "43. Совпадения сегментов", desc: "Бизнес-задача: Найти пары клиентов (e1.name, e2.name) из одного сегмента.\nДействие: JOIN таблицы users саму на себя по segment. Исключи зеркальные дубли (e1.id < e2.id).", answer: "SELECT u1.name, u2.name, u1.segment FROM users u1 JOIN users u2 ON u1.segment = u2.segment WHERE u1.id < u2.id", hint: "Self JOIN. Не забудь алиасы u1 и u2." },
+            { id: 44, type: 'select', title: "44. Лидеры сегментов (Корреляция)", desc: "Бизнес-задача: Выявить клиентов, чей LTV выше среднего ИМЕННО ПО ИХ СЕГМЕНТУ.\nДействие: Выведи name, segment, ltv. Используй коррелированный подзапрос.", answer: "SELECT name, segment, ltv FROM users u1 WHERE ltv > (SELECT AVG(ltv) FROM users u2 WHERE u1.segment = u2.segment)", hint: "В подзапросе ссылайся на алиас (u1) внешнего запроса." },
+            { id: 45, type: 'select', title: "45. Тяжелая математика заказа", desc: "Бизнес-задача: Рассчитать стоимость сборки (qty * 100 руб) по каждому заказу.\nДействие: Соедини orders и order_items. Выведи id заказа и сумму (qty * 100). Группируй по orders.id.", answer: "SELECT orders.id, SUM(order_items.qty * 100) AS assembly_cost FROM orders JOIN order_items ON orders.id = order_items.order_id GROUP BY orders.id", hint: "JOIN -> GROUP BY -> SUM(математика)." },
+            
+            // Блок 10
+            { id: 46, type: 'dml', title: "46. Массовое повышение цен", desc: "Бизнес-задача: Инфляция. Отдел продаж требует поднять цены на ВСЕ товары в категории 'Laptops' на 15%.\nДействие: Напиши UPDATE запрос.", answer: "UPDATE products SET price = price * 1.15 WHERE category = 'Laptops'", verifyQuery: "SELECT id, price FROM products WHERE category = 'Laptops'", hint: "UPDATE таблица SET колонка = новое_значение WHERE условие." },
+            { id: 47, type: 'dml', title: "47. Закрытие инцидента", desc: "Бизнес-задача: Саппорт решил проблему.\nДействие: Установи статус (status) 'Closed' для тикета с id = 1.", answer: "UPDATE tickets SET status = 'Closed' WHERE id = 1", verifyQuery: "SELECT id, status FROM tickets WHERE id = 1", hint: "Не забудь WHERE, иначе закроешь все тикеты." },
+            { id: 48, type: 'dml', title: "48. Удаление клиента (GDPR)", desc: "Бизнес-задача: Клиент воспользовался правом на забвение.\nДействие: Удали из таблицы users клиента с id = 7.", answer: "DELETE FROM users WHERE id = 7", verifyQuery: "SELECT * FROM users", hint: "DELETE FROM таблица WHERE условие." },
+            { id: 49, type: 'dml', title: "49. Очистка старых тикетов", desc: "Бизнес-задача: Очистка базы.\nДействие: Удали все тикеты со статусом 'Closed'.", answer: "DELETE FROM tickets WHERE status = 'Closed'", verifyQuery: "SELECT * FROM tickets", hint: "DELETE по текстовому значению колонки." },
+            { id: 50, type: 'dml', title: "50. Регистрация нового клиента", desc: "Бизнес-задача: В систему пришел новый юзер.\nДействие: Добавь (INSERT) клиента: id=11, name='Джон Доу', segment='Regular', ltv=0, reg_year=2026.", answer: "INSERT INTO users VALUES (11, 'Джон Доу', 'Regular', 0, 2026)", verifyQuery: "SELECT * FROM users WHERE id = 11", hint: "INSERT INTO таблица VALUES (значения_в_порядке_схемы)." },
+            
+            // Блок 11
+            { id: 51, type: 'select', title: "51. Унификация названий", desc: "Бизнес-задача: Для красивого отчета нужны заглавные буквы.\nДействие: Выведи названия категорий (category) товаров в верхнем регистре. Назови колонку CAT_NAME.", answer: "SELECT UPPER(category) AS CAT_NAME FROM products", hint: "Функция UPPER() делает текст заглавным." },
+            { id: 52, type: 'select', title: "52. Склейка данных", desc: "Бизнес-задача: Генерация шаблона для SMS.\nДействие: Выведи для каждого клиента строку формата 'Уважаемый(ая) [name]'. Колонка sms_text.", answer: "SELECT CONCAT('Уважаемый(ая) ', name) AS sms_text FROM users", hint: "Функция CONCAT() объединяет строки." },
+            { id: 53, type: 'select', title: "53. Нижний регистр", desc: "Бизнес-задача: Нормализация поискового индекса.\nДействие: Выведи тексты проблем (issue) из тикетов в нижнем регистре. Колонка low_issue.", answer: "SELECT LOWER(issue) AS low_issue FROM tickets", hint: "Функция LOWER() делает текст строчным." },
+            { id: 54, type: 'select', title: "54. Длинные названия", desc: "Бизнес-задача: Аудит UI каталога.\nДействие: Найди товары (products), у которых длина названия (title) строго больше 15 символов.", answer: "SELECT title FROM products WHERE LENGTH(title) > 15", hint: "Функция LENGTH(колонка) возвращает длину строки." },
+            
+            // Блок 12
+            { id: 55, type: 'select', title: "55. Четность заказов", desc: "Бизнес-задача: A/B тестирование. Нужно выбрать заказы с четными ID.\nДействие: Выведи заказы (orders), где id делится на 2 без остатка (через %).", answer: "SELECT * FROM orders WHERE id % 2 = 0", hint: "Условие проверки на четность: колонка % 2 = 0." },
+            { id: 56, type: 'select', title: "56. Сводка 4 таблиц", desc: "Бизнес-задача: Тотальный отчет продаж.\nДействие: Соедини users, orders, order_items и products. Выведи Имя клиента, ID заказа, Название товара, Количество.", answer: "SELECT u.name, o.id, p.title, oi.qty FROM users u JOIN orders o ON u.id = o.user_id JOIN order_items oi ON o.id = oi.order_id JOIN products p ON oi.product_id = p.id", hint: "Цепочка JOIN'ов по ключам. Обязательно используй алиасы (u, o, oi, p) для краткости." },
+            { id: 57, type: 'select', title: "57. Матрица возможных покупок", desc: "Бизнес-задача: Построение рекомендательной системы.\nДействие: Сделай декартово произведение (CROSS JOIN) пользователей (name) и товаров (title).", answer: "SELECT users.name, products.title FROM users CROSS JOIN products", hint: "CROSS JOIN перемножает все на все. ON не требуется." },
+            { id: 58, type: 'select', title: "58. Активные клиенты (EXISTS)", desc: "Бизнес-задача: Найти клиентов, делавших заказы, через оператор EXISTS (без JOIN).\nДействие: Выведи name из users, где EXISTS подзапрос к orders.", answer: "SELECT name FROM users u WHERE EXISTS (SELECT * FROM orders o WHERE o.user_id = u.id)", hint: "EXISTS проверяет, возвращает ли подзапрос (с привязкой по ID) хотя бы одну строку." },
+            
+            // Блок 13
+            { id: 59, type: 'select', title: "59. Спящие клиенты", desc: "Бизнес-задача: Найти тех, кто НИЧЕГО не заказывал.\nДействие: Выведи name из users, используя NOT EXISTS и подзапрос к orders.", answer: "SELECT name FROM users u WHERE NOT EXISTS (SELECT * FROM orders o WHERE o.user_id = u.id)", hint: "Просто инвертируй предыдущую задачу с помощью NOT." },
+            { id: 60, type: 'select', title: "60. Вложенные IN", desc: "Бизнес-задача: Выведи title товаров, которые есть в заказах со статусом 'Cancelled'. Использовать только WHERE IN, без JOIN.", answer: "SELECT title FROM products WHERE id IN (SELECT product_id FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE status = 'Cancelled'))", hint: "Матрешка подзапросов: Товары -> Позиции -> Заказы." },
+            { id: 61, type: 'select', title: "61. Доля клиента в выручке", desc: "Бизнес-задача: Выведи name клиента и процент (pct) его LTV от суммарного LTV всех клиентов базы. Округлять не надо.", answer: "SELECT name, ltv * 100 / (SELECT SUM(ltv) FROM users) AS pct FROM users", hint: "ltv * 100 / (SELECT SUM(ltv)...)" },
+            { id: 62, type: 'select', title: "62. Оценка рисков саппорта", desc: "Бизнес-задача: Выведи id тикета и колонку SLA: если priority в ('Critical', 'Blocker') -> 'SLA 1h', иначе 'SLA 24h'.", answer: "SELECT id, CASE WHEN priority IN ('Critical', 'Blocker') THEN 'SLA 1h' ELSE 'SLA 24h' END AS sla FROM tickets", hint: "Используй конструкцию CASE WHEN ... IN (...) THEN ..." },
+            { id: 63, type: 'select', title: "63. Кто богаче Смирновой?", desc: "Бизнес-задача: Найти клиентов (name), чей LTV строго больше, чем LTV клиента Анны Смирновой (id=2). Используй подзапрос.", answer: "SELECT name FROM users WHERE ltv > (SELECT ltv FROM users WHERE id = 2)", hint: "Найди LTV Анны подзапросом и сравни с ним." },
+            
+            // Блок 14
+            { id: 64, type: 'dml', title: "64. Увольнение аудитории", desc: "Бизнес-задача: Удалить всех клиентов, у которых нет заказов.\nДействие: DELETE из users с подзапросом (NOT IN к таблице orders).", answer: "DELETE FROM users WHERE id NOT IN (SELECT user_id FROM orders)", verifyQuery: "SELECT id, name FROM users", hint: "DELETE FROM ... WHERE id NOT IN (выборка user_id из orders)." },
+            { id: 65, type: 'dml', title: "65. Массовое списание", desc: "Бизнес-задача: Обнулить stock (остаток) у товаров категории 'Audio'.", answer: "UPDATE products SET stock = 0 WHERE category = 'Audio'", verifyQuery: "SELECT id, title, stock FROM products WHERE category = 'Audio'", hint: "Обычный UPDATE с фильтрацией по тексту." },
+            { id: 66, type: 'dml', title: "66. Изменение статусов логики", desc: "Бизнес-задача: Обновить статус заказов. Если status = 'Processing', сделай его 'Shipped', иначе оставь как есть (или установи сам в себя).", answer: "UPDATE orders SET status = CASE WHEN status = 'Processing' THEN 'Shipped' ELSE status END", verifyQuery: "SELECT id, status FROM orders", hint: "Используй CASE внутри команды SET." },
+            { id: 67, type: 'dml', title: "67. Зачистка корзин", desc: "Бизнес-задача: Авария на сервере, нужно обнулить таблицу order_items целиком. Используй DELETE без условий.", answer: "DELETE FROM order_items", verifyQuery: "SELECT COUNT(*) AS c FROM order_items", hint: "Команда DELETE без блока WHERE удаляет все строки." },
+            
+            // Блок 15
+            { id: 68, type: 'select', title: "68. Самая крупная покупка сегмента", desc: "Бизнес-задача: Найти сегменты (segment), в которых максимальный чек заказа превышает 100000. Выведи segment и этот макс. чек (max_check).", answer: "SELECT u.segment, MAX(o.total_amount) AS max_check FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.segment HAVING MAX(o.total_amount) > 100000", hint: "JOIN -> GROUP BY -> HAVING с функцией MAX()." },
+            { id: 69, type: 'select', title: "69. Оптовики (HAVING)", desc: "Бизнес-задача: Найти заказы (orders.id), в которых более 2 единиц суммарного товара (qty). Выведи id заказа.", answer: "SELECT order_id FROM order_items GROUP BY order_id HAVING SUM(qty) > 2", hint: "Группируй таблицу items по order_id, проверяй HAVING SUM(qty)." },
+            { id: 70, type: 'select', title: "70. God Mode: Эскалация", desc: "Бизнес-задача: Найти уникальные сегменты (segment) пользователей, у которых есть нерешенные (status='Open') тикеты приоритета 'Critical'. Выведи сегменты.", answer: "SELECT DISTINCT u.segment FROM users u JOIN tickets t ON u.id = t.user_id WHERE t.status = 'Open' AND t.priority = 'Critical'", hint: "JOIN users и tickets, фильтр по статусу и приоритету, затем SELECT DISTINCT." }
+        ];
+
+        // --- COMPONENTS ---
+
+        // 1. MAIN MENU (DASHBOARD)
+        const MainMenu = ({ setView }) => {
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 text-slate-900 p-6 px-4 sm:px-6">
+                    <div className="text-center mb-12 w-full max-w-3xl">
+                        <div className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold uppercase tracking-widest rounded-full mb-4">Internal Tools</div>
+                        <h1 className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tighter mb-4">SQL Data Arena</h1>
+                        <p className="text-slate-500 text-base sm:text-lg">Интерактивная среда для отработки корпоративных SQL-сценариев. Проектирование, аналитика, DML.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-5xl">
+                        <button 
+                            onClick={() => setView('theory')}
+                            className="group relative bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 hover:border-blue-500 hover:shadow-xl transition-all text-left shadow-sm overflow-hidden"
+                        >
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full blur-3xl opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                            <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-3 flex items-center gap-3 relative z-10">
+                                <div className="p-2 bg-blue-100 rounded-lg text-blue-600"><svg className="w-6 h-6 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg></div>
+                                Спецификация
+                            </h2>
+                            <p className="text-slate-500 mb-6 relative z-10 text-sm sm:text-base">Глубокая теоретическая база. Порядок выполнения запросов, архитектура связей, обработка NULL, агрегации. Фундамент инженера.</p>
+                            <span className="inline-block px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold uppercase tracking-wider group-hover:bg-blue-600 group-hover:text-white transition-colors relative z-10">Изучить документацию →</span>
+                        </button>
+
+                        <button 
+                            onClick={() => setView('arena')}
+                            className="group relative bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 hover:border-red-500 hover:shadow-xl transition-all text-left shadow-sm overflow-hidden"
+                        >
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-red-50 rounded-full blur-3xl opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                            <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-3 flex items-center gap-3 relative z-10">
+                                <div className="p-2 bg-red-100 rounded-lg text-red-600"><svg className="w-6 h-6 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg></div>
+                                SQL Полигон
+                            </h2>
+                            <p className="text-slate-500 mb-6 relative z-10 text-sm sm:text-base">70 реальных бизнес-задач E-commerce. Выборки, аналитика, корректировка данных. Интерактивная среда с валидацией результата.</p>
+                            <span className="inline-block px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold uppercase tracking-wider group-hover:bg-red-600 group-hover:text-white transition-colors relative z-10">Перейти к задачам →</span>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // 2. THEORY BASE (EXPANDED)
+        const Theory = ({ setView, targetSection }) => {
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                if (targetSection) {
+                    const el = document.getElementById(targetSection);
+                    if (el) {
+                        setTimeout(() => {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            el.classList.add('bg-blue-50', 'ring-2', 'ring-blue-400');
+                            setTimeout(() => el.classList.remove('bg-blue-50', 'ring-2', 'ring-blue-400'), 2500);
+                        }, 100);
+                    }
+                }
+            }, [targetSection]);
+
+            return (
+                <div className="flex flex-col h-screen bg-slate-100 overflow-hidden font-sans">
+                    <div className="bg-white border-b border-slate-200 text-slate-900 p-4 px-6 flex justify-between items-center shrink-0 shadow-sm z-10">
+                        <h1 className="text-xl sm:text-2xl font-black tracking-tight flex items-center gap-2">
+                            <span className="text-blue-600">Спецификация</span> <span className="hidden sm:inline">| База Знаний Сеньора</span>
+                        </h1>
+                        <button onClick={() => setView('menu')} className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs sm:text-sm font-bold uppercase tracking-wider transition-colors">← В меню</button>
+                    </div>
+                    
+                    <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-8 smooth-scroll">
+                        <div className="max-w-5xl mx-auto space-y-8 pb-12">
+                            
+                            {/* Order of execution */}
+                            <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200">
+                                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mb-4 border-b border-slate-100 pb-3 flex items-center gap-3">
+                                    <span className="text-blue-500">0.</span> Порядок выполнения запроса (Архитектура)
+                                </h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base leading-relaxed">Синтаксис SQL обманчив. Ты пишешь <code>SELECT</code> в самом начале, но база данных читает его почти в самом конце. Если ты не понимаешь этот порядок, ты никогда не поймешь, почему твои запросы падают с ошибкой "column does not exist". Вот реальный порядок работы движка:</p>
+                                <ol className="list-decimal pl-5 space-y-3 text-slate-800 font-medium mb-6 bg-slate-50 p-6 rounded-xl border border-slate-200">
+                                    <li><strong className="text-blue-600 font-black">FROM / JOIN</strong> — Определяется источник данных. Таблицы считываются и склеиваются в огромную виртуальную матрицу. Здесь создаются алиасы таблиц (<code>FROM users u</code>).</li>
+                                    <li><strong className="text-red-600 font-black">WHERE</strong> — Жесткая фильтрация строк. Строки, не прошедшие проверку, выбрасываются из памяти. <em>(Важно: здесь еще нельзя использовать алиасы колонок из SELECT, потому что SELECT еще не выполнился!)</em></li>
+                                    <li><strong className="text-purple-600 font-black">GROUP BY</strong> — Оставшиеся строки сортируются по "корзинам" на основе указанных колонок.</li>
+                                    <li><strong className="text-yellow-600 font-black">HAVING</strong> — Фильтрация уже сгруппированных "корзин" (например, отбросить группы, где меньше 5 записей).</li>
+                                    <li><strong className="text-green-600 font-black">SELECT</strong> — Наконец-то база смотрит, какие колонки ты просил показать. Только здесь вычисляются математические формулы и функции (SUM, COUNT). Здесь же назначаются алиасы колонкам (<code>AS my_col</code>).</li>
+                                    <li><strong className="text-indigo-600 font-black">DISTINCT</strong> — Удаление полных строк-дубликатов из результата SELECT.</li>
+                                    <li><strong className="text-slate-800 font-black">ORDER BY</strong> — Итоговая сортировка результата. <em>(Поскольку это происходит после SELECT, здесь УЖЕ можно использовать алиасы колонок!)</em></li>
+                                    <li><strong className="text-slate-500 font-black">LIMIT / OFFSET</strong> — Обрезка лишних строк для отображения (пагинация).</li>
+                                </ol>
+                            </div>
+
+                            <div id="theory-base" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">1. Базовый SELECT и DISTINCT</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Основа выборки. Символ <code>*</code> тянет все колонки. На проде использование <code>SELECT *</code> — это маркер джуниора, так как это перегружает сеть лишними данными (например, тянет бинарники картинок, когда тебе нужно было только имя).</p>
+                                <ul className="list-disc pl-5 space-y-2 text-slate-700 text-sm mb-4">
+                                    <li><code>SELECT col1, col2</code> — всегда явно указывай колонки.</li>
+                                    <li><code>SELECT DISTINCT col1</code> — оставляет только уникальные значения. Работает тяжело, так как базе приходится неявно сортировать результат под капотом.</li>
+                                    <li><code>AS alias_name</code> — задает временное имя колонке. Слово <code>AS</code> можно опускать: <code>SELECT name client_name</code>.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-filter" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">2. Фильтрация (WHERE) и Сортировка (ORDER BY)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Блок <code>WHERE</code> отсекает мусор до начала тяжелых вычислений.</p>
+                                <ul className="list-disc pl-5 space-y-2 text-slate-700 text-sm mb-4">
+                                    <li><strong>Операторы сравнения:</strong> <code>=</code>, <code>!=</code> (или <code>&lt;&gt;</code>), <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>.</li>
+                                    <li><strong>Логические:</strong> <code>AND</code> (И), <code>OR</code> (ИЛИ). <code>AND</code> выполняется первым! Если пишешь <code>WHERE A OR B AND C</code>, база прочитает это как <code>A OR (B AND C)</code>. Всегда используй скобки: <code>WHERE (A OR B) AND C</code>.</li>
+                                </ul>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base"><code>ORDER BY</code> сортирует выдачу. <code>ASC</code> (по умолчанию) — от меньшего к большему, А->Я. <code>DESC</code> — от большего к меньшему, Я->А. Можно сортировать по нескольким колонкам.</p>
+                            </div>
+
+                            <div id="theory-filter-adv" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">3. Продвинутая фильтрация (IN, BETWEEN, LIKE, IS NULL)</h2>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><code>IN (val1, val2)</code> — Элегантный заменитель длинной цепочки <code>OR</code>. База оптимизирует IN быстрее, чем много OR. Можно инвертировать: <code>NOT IN (...)</code>.</li>
+                                    <li><code>BETWEEN X AND Y</code> — Ищет значения в диапазоне. <strong>Важно:</strong> включает обе границы. <code>BETWEEN 1 AND 5</code> найдет и 1, и 5.</li>
+                                    <li><code>LIKE</code> — Текстовый поиск по маске. <code>%</code> означает 0 или больше любых символов. <code>_</code> означает ровно один символ. <br/><span className="text-red-600 font-bold">⚠️ Опасность:</span> Поиск <code>LIKE '%слово%'</code> (с процентом в начале) отключает индексы БД и вызывает Full Table Scan (полный перебор таблицы), что может "положить" продакшен.</li>
+                                </ul>
+                                <div className="bg-red-50 p-5 rounded-xl border border-red-200 text-sm text-red-900">
+                                    <strong className="text-lg">Анатомия NULL (Неизвестность)</strong><br/>
+                                    <code>NULL</code> — это не 0 и не пустая строка "". Это физическое отсутствие значения. <br/>
+                                    Математика с NULL дает NULL (<code>5 + NULL = NULL</code>). <br/>
+                                    Сравнение с NULL дает NULL (<code>NULL = NULL</code> — это FALSE!). <br/>
+                                    Поэтому <strong>КАТЕГОРИЧЕСКИ НЕЛЬЗЯ</strong> писать <code>WHERE col = NULL</code>. <br/>
+                                    Единственный верный синтаксис: <code>WHERE col IS NULL</code> или <code>WHERE col IS NOT NULL</code>.
+                                </div>
+                            </div>
+
+                            <div id="theory-agg" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">4. Агрегатные функции (Подробный разбор)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Берут множество строк и сжимают их в одно число. <strong>Все агрегатные функции (кроме COUNT(*)) ИГНОРИРУЮТ NULL.</strong></p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><code>COUNT(*)</code> — Считает физическое количество строк в выборке. Ему плевать, что внутри колонок.</li>
+                                    <li><code>COUNT(col_name)</code> — Считает количество строк, где колонка <code>col_name</code> <strong>НЕ РАВНА NULL</strong>.</li>
+                                    <li><code>COUNT(DISTINCT col_name)</code> — Считает количество уникальных непустых значений.</li>
+                                    <li><code>SUM(col_name)</code> — Суммирует числовые значения (NULL пропускаются как нули).</li>
+                                    <li><code>AVG(col_name)</code> — Среднее арифметическое. Внимание: если из 5 строк в 2-х стоит NULL, <code>AVG</code> сложит оставшиеся 3 и разделит на 3, а не на 5!</li>
+                                    <li><code>MAX(col) / MIN(col)</code> — Находит максимум/минимум. Работает с числами, датами и даже строками (по алфавиту).</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-group" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">5. Логика Группировки (GROUP BY и HAVING)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Когда ты используешь агрегатную функцию (например, SUM), база пытается сжать всю таблицу в одну строку. Но если тебе нужна сумма <em>по каждому отделу</em>, тебе нужен <code>GROUP BY</code>.</p>
+                                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-4 text-sm text-indigo-900">
+                                    <strong>Железное правило SELECT:</strong> Если в твоем запросе есть хотя бы одна агрегатная функция (SUM, COUNT), то ВСЕ остальные обычные колонки в SELECT <strong>обязаны</strong> быть перечислены в <code>GROUP BY</code>.
+                                </div>
+                                <ul className="list-disc pl-5 space-y-2 text-slate-700 text-sm mb-4">
+                                    <li><code>GROUP BY col1, col2</code> — База создает уникальные сочетания col1+col2 и для каждой такой "корзины" вычисляет свой SUM/COUNT.</li>
+                                    <li><code>HAVING</code> — Это <code>WHERE</code>, но для агрегатов. Ты не можешь написать <code>WHERE SUM(price) > 100</code>, потому что WHERE работает ДО агрегации (см. Порядок выполнения). Для этого придуман <code>HAVING SUM(price) > 100</code>.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-join" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">6. Связи: INNER JOIN</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Реляционные базы хранят данные по частям. JOIN склеивает их обратно.</p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><code>INNER JOIN</code> (или просто <code>JOIN</code>) — это <strong>строгое пересечение</strong>.</li>
+                                    <li>База берет строку из таблицы А, ищет совпадение в таблице Б по ключу, указанному в <code>ON</code>.</li>
+                                    <li>Если клиент сделал заказ — строка будет в ответе. Если клиент зарегистрировался, но заказа нет — <strong>INNER JOIN уничтожит этого клиента из выдачи</strong>. Заказ без клиента (ошибка БД) тоже не попадет в выборку.</li>
+                                    <li><span className="text-red-600 font-bold">Опасность (Cartesian Product):</span> Если ты сделаешь JOIN без условия <code>ON</code>, каждая строка левой таблицы умножится на каждую строку правой. 1000 юзеров * 1000 заказов = 1 миллион строк в результате. Это положит сервер.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-join-left" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">7. Внешние связи: LEFT JOIN</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">В отличие от жесткого INNER JOIN, <code>LEFT JOIN</code> гарантирует сохранность данных.</p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li>Берет ВСЕ строки из "Левой" таблицы (та, что написана перед словом LEFT JOIN).</li>
+                                    <li>Ищет им пары в Правой таблице. Если находит — склеивает.</li>
+                                    <li>Если пары нет (клиент есть, а заказов нет) — строка клиента остается, а на место колонок заказа подставляется <code>NULL</code>.</li>
+                                    <li><strong>Главный бизнес-паттерн:</strong> Поиск "сирот". Чтобы найти товары, которые НИКТО НИКОГДА не покупал: <code>FROM products p LEFT JOIN order_items oi ON p.id = oi.product_id WHERE oi.order_id IS NULL</code>.</li>
+                                    <li><em>Примечание:</em> Существует RIGHT JOIN, но его почти не используют в коммерческой разработке — просто меняют таблицы местами и используют LEFT JOIN для читаемости сверху вниз.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-subquery" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">8. Подзапросы (Вложенные запросы)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Полноценный SELECT внутри другого запроса. Обязательно оборачивается в скобки <code>(SELECT ...)</code>.</p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><strong>Скалярный:</strong> Возвращает 1 ячейку (1 строка, 1 колонка). Можно использовать где угодно: <code>WHERE price > (SELECT AVG(price) FROM products)</code>.</li>
+                                    <li><strong>Векторный:</strong> Возвращает 1 колонку, но много строк. Используется с IN: <code>WHERE user_id IN (SELECT id FROM users WHERE segment='VIP')</code>.</li>
+                                    <li><strong>Табличный (Derived Table):</strong> Возвращает таблицу. Используется в FROM: <code>FROM (SELECT id, price FROM products) AS sub_table</code>.</li>
+                                    <li><strong>Коррелированный (ОПАСНО):</strong> Подзапрос, который ссылается на таблицу из внешнего запроса. Он выполняется ЗАНОВО для каждой строки внешней таблицы. На таблице в 100 строк выполнится 100 раз. На миллионе — 1 миллион раз. Очень медленно, но иногда незаменимо для сложной логики.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-adv" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">9. Продвинутая выборка (UNION, CASE)</h2>
+                                <ul className="list-disc pl-5 space-y-4 text-slate-700 text-sm mb-4">
+                                    <li>
+                                        <strong>UNION и UNION ALL:</strong> Склеивают результаты двух запросов по вертикали (друг под другом). Правило: одинаковое количество колонок и их типы. <br/>
+                                        <code>UNION</code> — удаляет дубликаты (очень медленно, требует сортировки).<br/>
+                                        <code>UNION ALL</code> — просто слепляет как есть (очень быстро). <strong>Сеньоры всегда используют UNION ALL, если уникальность не критична.</strong>
+                                    </li>
+                                    <li>
+                                        <strong>Конструкция CASE:</strong> Это if-else внутри SQL. Позволяет на лету менять вывод данных или категоризировать их.
+                                        <div className="bg-slate-900 text-green-400 p-3 mt-2 rounded font-mono text-[12px] overflow-x-auto">
+                                            SELECT title,<br/>
+                                            CASE <br/>
+                                            &nbsp;&nbsp;WHEN stock = 0 THEN 'Out of stock'<br/>
+                                            &nbsp;&nbsp;WHEN stock &lt; 10 THEN 'Ending soon'<br/>
+                                            &nbsp;&nbsp;ELSE 'In stock' <br/>
+                                            END AS availability <br/>
+                                            FROM products;
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-dml" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">10. DML (UPDATE, DELETE, INSERT)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Команды манипуляции данными (Data Manipulation Language).</p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><code>INSERT INTO table VALUES (val1, val2)</code> — Вставка новой строки.</li>
+                                    <li><code>UPDATE table SET col = new_val WHERE id = 1</code> — Изменение существующих.</li>
+                                    <li><code>DELETE FROM table WHERE id = 1</code> — Удаление строк. Физическое стирание (в отличие от простановки флага is_deleted).</li>
+                                </ul>
+                                <div className="bg-red-100 p-4 rounded-xl border border-red-300 text-sm text-red-900">
+                                    <strong>ЗАПОВЕДЬ АВТОМАТИЗАТОРА:</strong> Если ты пишешь UPDATE или DELETE, <strong>всегда</strong> сначала пиши SELECT с тем же условием WHERE. Убедись, что база возвращает именно те 3 строки, которые ты хочешь удалить, а не 300 000 строк всего продакшена. И только потом меняй слово SELECT на DELETE.
+                                </div>
+                            </div>
+
+                            <div id="theory-func" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">11. Строковые и служебные функции</h2>
+                                <ul className="list-disc pl-5 space-y-2 text-slate-700 text-sm mb-4">
+                                    <li><code>UPPER(col)</code> / <code>LOWER(col)</code> — Приводит к ВЕРХНЕМУ или нижнему регистру. Полезно для нормализации поиска (например, чтобы 'email@ya.ru' и 'Email@Ya.ru' считались одним).</li>
+                                    <li><code>CONCAT(string1, string2)</code> — Склеивает строки. В некоторых СУБД используется оператор <code>||</code>.</li>
+                                    <li><code>LENGTH(col)</code> — Возвращает длину строки в символах.</li>
+                                    <li><strong>Оружие Сеньора — COALESCE(col1, col2, 'default'):</strong> Возвращает первое не-NULL значение из списка. Идеально для замены NULL на нули в отчетах: <code>SELECT COALESCE(bonus, 0) FROM salary</code> (если бонуса нет, выведет 0 вместо пустой дыры).</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-exists" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">12. Высший пилотаж: EXISTS vs IN</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Оба оператора проверяют вхождение в подзапрос, но работают кардинально по-разному.</p>
+                                <ul className="list-disc pl-5 space-y-3 text-slate-700 text-sm mb-4">
+                                    <li><code>IN</code>: Сначала полностью выполняет внутренний подзапрос, загружает весь массив ID в память (например, миллион ID), и затем сравнивает каждую внешнюю строку с этим массивом. Тяжело по памяти.</li>
+                                    <li><code>EXISTS</code>: Берет внешнюю строку и "ныряет" в подзапрос. Как только база находит <strong>хотя бы одно</strong> совпадение, она мгновенно прерывает поиск для этой строки и возвращает TRUE. Это называется <em>Short-circuit evaluation (ленивое вычисление)</em>.</li>
+                                    <li><strong>Итог:</strong> На больших энтерпрайз базах <code>EXISTS</code> может быть в 10-100 раз быстрее, чем <code>IN</code>.</li>
+                                </ul>
+                            </div>
+
+                            <div id="theory-arch" className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-200 transition-all duration-500">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">13. Горизонты Архитектора (Что дальше?)</h2>
+                                <p className="text-slate-600 mb-4 text-sm sm:text-base">Если ты осилишь эти 70 задач, твой следующий шаг для зарплаты 500k+:</p>
+                                <ul className="list-disc pl-5 space-y-2 text-slate-700 text-sm mb-4">
+                                    <li><strong>Оконные функции (Window Functions):</strong> <code>ROW_NUMBER()</code>, <code>RANK()</code>, <code>SUM() OVER (PARTITION BY...)</code>. Позволяют считать скользящие суммы и рейтинги без сжатия строк через GROUP BY.</li>
+                                    <li><strong>CTE (Common Table Expressions):</strong> Оператор <code>WITH tbl AS (...)</code>. Позволяет создавать временные именованные запросы, делая код на 100 строк читаемым как книга.</li>
+                                    <li><strong>Индексы и EXPLAIN ANALYZE:</strong> Понимание того, как B-Tree индексы ускоряют поиск, и почему база решила сделать Seq Scan вместо Index Scan.</li>
+                                </ul>
+                            </div>
+
+                            <div className="text-center py-10">
+                                <button onClick={() => setView('arena')} className="px-6 py-3 sm:px-8 sm:py-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold uppercase tracking-widest shadow-lg shadow-red-500/30 active:scale-95 transition-all text-sm sm:text-base">Хватит читать. Иди писать код.</button>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 3. BRUTAL ARENA
+        const Arena = ({ setView, goToTheory }) => {
+            const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
+            const [query, setQuery] = useState("");
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState(null);
+            const [showAnswer, setShowAnswer] = useState(false);
+            const [showHint, setShowHint] = useState(false);
+            const [showLegend, setShowLegend] = useState(true);
+
+            const [solvedTasks, setSolvedTasks] = useState(() => {
+                const saved = localStorage.getItem('sqlArenaProgress');
+                return saved ? new Set(JSON.parse(saved)) : new Set();
+            });
+
+            useEffect(() => {
+                localStorage.setItem('sqlArenaProgress', JSON.stringify([...solvedTasks]));
+            }, [solvedTasks]);
+
+            useEffect(() => {
+                initDB();
+                setQuery("");
+                setResult(null);
+                setError(null);
+                setShowAnswer(false);
+                setShowHint(false);
+            }, [currentTaskIndex]);
+
+            const task = tasks[currentTaskIndex];
+            const currentCatInfo = getCategoryInfo(task.id);
+
+            const executeQuery = () => {
+                setError(null);
+                setResult(null);
+                try {
+                    if (!query.trim()) throw new Error("Ты не написал ни строчки кода. База ждет.");
+                    
+                    let userRes, expectedRes;
+
+                    if (task.type === 'dml') {
+                        initDB(); alasql(query); userRes = alasql(task.verifyQuery);
+                        initDB(); alasql(task.answer); expectedRes = alasql(task.verifyQuery);
+                        setResult(userRes);
+                    } else {
+                        initDB(); userRes = alasql(query);
+                        expectedRes = alasql(task.answer);
+                        setResult(userRes);
+                    }
+
+                    const isCorrect = JSON.stringify(userRes) === JSON.stringify(expectedRes);
+                    
+                    if (isCorrect) {
+                        setSolvedTasks(prev => new Set(prev).add(task.id));
+                    } else {
+                        setError("Данные не бьются с эталоном. Проверь логику, сортировку или колонки.");
+                    }
+                } catch (err) {
+                    setError("Ошибка SQL: " + err.message);
+                }
+            };
+
+            const resetProgress = () => {
+                if (window.confirm("Удалить весь прогресс из памяти устройства?")) {
+                    setSolvedTasks(new Set());
+                    localStorage.removeItem('sqlArenaProgress');
+                    setCurrentTaskIndex(0);
+                }
+            };
+
+            const renderTable = (data) => {
+                if (!data || data.length === 0) return <div className="text-slate-500 italic mt-4 p-4 border border-dashed border-slate-300 rounded-xl bg-slate-50 text-sm">Запрос выполнен успешно, но вернул 0 строк.</div>;
+                const columns = Object.keys(data[0]);
+                return (
+                    <div className="overflow-x-auto mt-4 border border-slate-200 rounded-xl shadow-sm bg-white">
+                        <table className="w-full text-left text-sm text-slate-800 min-w-max">
+                            <thead className="bg-slate-50 text-slate-600 uppercase text-xs border-b border-slate-200">
+                                <tr>{columns.map(col => <th key={col} className="px-4 py-3 border-r border-slate-200 last:border-0 font-bold tracking-wider">{col}</th>)}</tr>
+                            </thead>
+                            <tbody>
+                                {data.map((row, i) => (
+                                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                                        {columns.map(col => <td key={col} className="px-4 py-2 border-r border-slate-100 last:border-0 sql-code text-[13px]">{row[col] !== null && row[col] !== undefined ? row[col] : <span className="text-slate-300 italic">NULL</span>}</td>)}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                );
+            };
+
+            let currentRenderCategory = "";
+
+            return (
+                <div className="flex flex-col md:flex-row h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
+                    
+                    {/* Левая панель - список задач (Responsive) */}
+                    <div className="w-full md:w-80 lg:w-96 bg-white border-b md:border-b-0 md:border-r border-slate-200 flex flex-col shadow-sm shrink-0 h-[40vh] md:h-full z-10">
+                        <div className="p-4 bg-white border-b border-slate-200 flex justify-between items-center shrink-0">
+                            <div>
+                                <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">SQL ARENA</h1>
+                                <p className="text-[10px] text-blue-600 mt-0.5 font-bold uppercase tracking-widest">Enterprise Edition</p>
+                            </div>
+                            <button onClick={() => setView('menu')} className="text-[10px] sm:text-xs text-slate-500 hover:text-slate-900 uppercase font-bold tracking-wider border border-slate-200 hover:border-slate-400 px-2 py-1.5 rounded-md transition-colors">Меню</button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 sm:p-3 space-y-1">
+                            {tasks.map((t, idx) => {
+                                const isSolved = solvedTasks.has(t.id);
+                                const isActive = currentTaskIndex === idx;
+                                const catName = getCategoryInfo(t.id).name;
+                                const showCatHeader = catName !== currentRenderCategory;
+                                if (showCatHeader) currentRenderCategory = catName;
+
+                                return (
+                                    <React.Fragment key={t.id}>
+                                        {showCatHeader && (
+                                            <div className="mt-4 mb-2 first:mt-0 px-2 py-1 bg-slate-50 border-l-4 border-slate-300 text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+                                                {catName}
+                                            </div>
+                                        )}
+                                        <button 
+                                            onClick={() => setCurrentTaskIndex(idx)}
+                                            className={`w-full text-left p-2.5 rounded-lg transition-all border-l-4 text-xs sm:text-sm font-medium ${
+                                                isActive ? 'bg-blue-50 border-blue-600 text-blue-900 shadow-sm' : isSolved ? 'bg-green-50 border-green-500 text-green-800' : 'bg-white border-transparent text-slate-600 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="truncate">{t.title}</span>
+                                                {isSolved && <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
+                                            </div>
+                                        </button>
+                                    </React.Fragment>
+                                )
+                            })}
+                        </div>
+                        <div className="p-3 sm:p-4 bg-white border-t border-slate-200 shrink-0 flex flex-col gap-2">
+                            <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                                <span>Прогресс</span><span className="text-blue-600">{solvedTasks.size} / {tasks.length}</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-1">
+                                <div className="bg-blue-600 h-full transition-all duration-500" style={{ width: `${(solvedTasks.size / tasks.length) * 100}%` }}></div>
+                            </div>
+                            <button onClick={resetProgress} className="text-[10px] text-slate-400 hover:text-red-600 uppercase font-bold tracking-widest text-center transition-colors">Сбросить сессию</button>
+                        </div>
+                    </div>
+
+                    {/* Правая панель (Рабочая область) */}
+                    <div className="flex-1 flex flex-col relative bg-slate-50 overflow-hidden">
+                        
+                        {/* ЛЕГЕНДА СХЕМЫ БД (Responsive height) */}
+                        <div className={`bg-white border-b border-slate-200 transition-all duration-300 shrink-0 overflow-y-auto custom-scrollbar shadow-sm z-20 ${showLegend ? 'max-h-[50vh] md:max-h-[35vh] opacity-100 p-4 sm:p-5' : 'max-h-0 opacity-0 p-0 border-none'}`}>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-xs sm:text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>
+                                    Архитектура БД
+                                </h3>
+                                <button onClick={() => setShowLegend(false)} className="text-[10px] sm:text-xs text-slate-400 hover:text-slate-800 uppercase font-bold transition-colors bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded">Скрыть схему</button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+                                {schemaLegend.map(tbl => (
+                                    <div key={tbl.name} className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm text-xs">
+                                        <div className="font-bold text-blue-700 mb-1">{tbl.name}</div>
+                                        <div className="text-slate-500 mb-2 text-[10px] leading-tight h-6">{tbl.desc}</div>
+                                        <ul className="space-y-1">
+                                            {tbl.columns.map(c => (
+                                                <li key={c.n} className="flex justify-between border-b border-slate-100 pb-1 mt-1 last:border-0">
+                                                    <span className="sql-code text-slate-700">{c.n}</span>
+                                                    <span className={`text-[9px] sm:text-[10px] font-bold uppercase ${c.type.includes('PK') ? 'text-amber-600 bg-amber-50 px-1 rounded' : c.type.includes('FK') ? 'text-purple-600 bg-purple-50 px-1 rounded' : 'text-slate-400'}`}>{c.type}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Основной контент */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 flex flex-col mx-auto w-full max-w-6xl">
+                            {!showLegend && (
+                                <button onClick={() => setShowLegend(true)} className="mb-4 self-start text-[10px] sm:text-xs font-bold text-slate-500 hover:text-blue-600 uppercase flex items-center gap-1 border border-slate-200 rounded-lg px-3 py-1.5 bg-white shadow-sm transition-colors">
+                                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                    Показать архитектуру
+                                </button>
+                            )}
+
+                            {/* Карточка задачи */}
+                            <div className="bg-white border border-slate-200 p-5 sm:p-6 rounded-2xl shadow-sm mb-6 shrink-0 relative">
+                                <div className="absolute top-4 right-4 hidden sm:block">
+                                    <button 
+                                        onClick={() => goToTheory(currentCatInfo.theoryId)}
+                                        className="bg-slate-50 hover:bg-blue-50 text-slate-600 hover:text-blue-700 border border-slate-200 hover:border-blue-200 transition-colors px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 shadow-sm"
+                                    >
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                                        Документация
+                                    </button>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:pr-40">
+                                    {task.type === 'dml' && <span className="px-2 py-0.5 bg-red-100 text-red-800 text-[10px] font-bold uppercase rounded-md border border-red-200">DML Query</span>}
+                                    <h2 className="text-lg sm:text-xl font-bold text-slate-900 w-full sm:w-auto">{task.title}</h2>
+                                    {/* Mobile doc button */}
+                                    <button onClick={() => goToTheory(currentCatInfo.theoryId)} className="sm:hidden mt-2 bg-slate-50 text-blue-600 border border-slate-200 px-3 py-1 rounded-md text-[10px] font-bold uppercase w-full text-center">Спецификация (Теория)</button>
+                                </div>
+                                <div className="text-slate-700 text-sm sm:text-base leading-relaxed bg-slate-50 p-4 border border-slate-100 rounded-xl whitespace-pre-line shadow-inner">
+                                    {task.desc}
+                                </div>
+                            </div>
+
+                            {/* Редактор */}
+                            <div className="relative shadow-sm rounded-2xl border border-slate-200 bg-white shrink-0 overflow-hidden">
+                                <div className="flex flex-wrap justify-between items-center bg-slate-50 border-b border-slate-200 px-4 py-3 gap-2">
+                                    <span className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-widest font-bold">SQL Editor</span>
+                                    <div className="flex gap-2 sm:gap-4">
+                                        <button onClick={() => { setShowHint(!showHint); setShowAnswer(false); }} className={`text-[10px] sm:text-xs font-bold uppercase tracking-wide transition-colors ${showHint ? 'text-blue-600' : 'text-slate-500 hover:text-blue-500'}`}>
+                                            {showHint ? "Скрыть Hint" : "Показать Hint"}
+                                        </button>
+                                        <button onClick={() => { setShowAnswer(!showAnswer); setShowHint(false); }} className={`text-[10px] sm:text-xs font-bold uppercase tracking-wide transition-colors ${showAnswer ? 'text-red-600' : 'text-slate-500 hover:text-red-500'}`}>
+                                            {showAnswer ? "Скрыть ответ" : "Ответ"}
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {showHint && (
+                                    <div className="p-3 sm:p-4 bg-blue-50 border-b border-blue-100 text-blue-900 text-xs sm:text-sm flex gap-3 items-start">
+                                        <svg className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        <span><strong className="uppercase text-[10px] sm:text-xs mr-2 text-blue-700">Вектор мысли:</strong> {task.hint}</span>
+                                    </div>
+                                )}
+
+                                {showAnswer && (
+                                    <div className="p-3 sm:p-4 bg-red-50 border-b border-red-100 text-red-800 sql-code text-xs sm:text-sm">
+                                        <div className="text-[10px] text-red-500 mb-2 uppercase font-bold tracking-wider font-sans">// Решение:</div>
+                                        {task.answer}
+                                    </div>
+                                )}
+
+                                <div className="flex relative">
+                                    <div className="w-8 sm:w-10 bg-slate-50 border-r border-slate-100 flex flex-col items-center pt-4 text-slate-400 sql-code text-[10px] sm:text-xs select-none">
+                                        1<br/>2<br/>3<br/>4
+                                    </div>
+                                    <textarea 
+                                        value={query} onChange={(e) => setQuery(e.target.value)}
+                                        className="flex-1 min-h-[120px] sm:min-h-[160px] p-4 text-slate-800 sql-code text-sm sm:text-base resize-y focus:outline-none focus:bg-blue-50/20 transition-colors custom-scrollbar"
+                                        placeholder="SELECT * FROM..." spellCheck="false"
+                                    ></textarea>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 shrink-0">
+                                <button onClick={executeQuery} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 sm:px-8 rounded-xl transition-all shadow-md shadow-blue-500/20 active:scale-95 uppercase text-xs sm:text-sm tracking-wider flex items-center justify-center gap-2 w-full sm:w-auto">
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    Выполнить (Run)
+                                </button>
+                                {solvedTasks.has(task.id) && currentTaskIndex < tasks.length - 1 && (
+                                    <button onClick={() => setCurrentTaskIndex(prev => prev + 1)} className="bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-md uppercase text-xs sm:text-sm tracking-wider flex items-center justify-center gap-2 animate-pulse w-full sm:w-auto">
+                                        Следующая <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="mt-8 flex-1 border-t border-slate-200 pt-6 pb-12">
+                                {error && <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 text-red-800 text-sm shadow-sm rounded-r-xl font-medium flex gap-3 items-start"><svg className="w-5 h-5 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>{error}</div>}
+                                {result && !error && solvedTasks.has(task.id) && <div className="bg-green-50 border-l-4 border-green-500 p-4 mb-4 text-green-800 text-sm shadow-sm rounded-r-xl font-bold flex items-center gap-3"><svg className="w-6 h-6 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg> Валидация успешна.</div>}
+                                {result && renderTable(result)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 4. MAIN APP ROUTER
+        const App = () => {
+            const [view, setView] = useState('menu'); // menu, theory, arena
+            const [targetTheory, setTargetTheory] = useState(null);
+
+            const handleGoToTheory = (sectionId) => {
+                setTargetTheory(sectionId);
+                setView('theory');
+            };
+
+            if (view === 'menu') return <MainMenu setView={setView} />;
+            if (view === 'theory') return <Theory setView={setView} targetSection={targetTheory} />;
+            if (view === 'arena') return <Arena setView={setView} goToTheory={handleGoToTheory} />;
+            return null;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
